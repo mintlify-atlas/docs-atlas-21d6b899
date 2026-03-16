@@ -1,0 +1,173 @@
+---
+title: 'neural_net'
+description: 'The basic two-stage ensemble: trains Model A (Decision Tree filter) and Model B (Deep MLP) on the 1–20,000 dataset.'
+---
+
+The `neural_net` module implements a two-stage ensemble pipeline. Model A is a shallow Decision Tree that filters the candidate space, and Model B is a deep MLP that makes the final prime/composite call on the candidates Model A passes through.
+
+---
+
+## `build_ensemble`
+
+Generates the full 1–20,000 dataset, trains both models, runs the ensemble on the 10,001–20,000 test range, and prints a classification report.
+
+```python
+def build_ensemble():
+    ...
+```
+
+**Parameters**
+
+None.
+
+**Returns**
+
+None. All results are printed to stdout.
+
+### Internal steps
+
+<Steps>
+  <Step title="Generate dataset">
+    Calls `extract_all_dimensions` for every integer from 1 to 20,000 and labels each number with `sympy.isprime`. Produces a `pd.DataFrame` with one row per integer.
+
+    ```python
+    data = []
+    for i in range(1, 20001):
+        dims = extract_all_dimensions(i)
+        dims['is_prime'] = int(isprime(i))
+        dims['number'] = i
+        data.append(dims)
+    df = pd.DataFrame(data)
+    ```
+  </Step>
+
+  <Step title="Split train / test">
+    Numbers 1–10,000 are the training set; numbers 10,001–20,000 are the test set.
+
+    ```python
+    train_df = df[df['number'] <= 10000].copy()
+    test_df  = df[df['number'] > 10000].copy()
+    ```
+  </Step>
+
+  <Step title="Train Model A — Decision Tree filter">
+    A `DecisionTreeClassifier` with `max_depth=5` is trained on six base-system features.
+
+    ```python
+    filter_features = [
+        'last_digit_base6',
+        'last_digit_base30',
+        'sum_base3',
+        'sum_base6',
+        'sum_base10',
+        'is_even_length_palindrome',
+    ]
+
+    model_a = DecisionTreeClassifier(max_depth=5, random_state=42)
+    model_a.fit(X_train_filter, y_train)
+    ```
+
+    Accuracy on the 10k–20k test range is printed immediately after fitting.
+  </Step>
+
+  <Step title="Identify intersection candidates">
+    Any number that Model A predicts as prime (`model_a_pred == 1`) is forwarded to Model B for a second opinion.
+
+    ```python
+    train_intersections = train_df[train_df['model_a_pred'] == 1].copy()
+    test_intersections  = test_df[test_df['model_a_pred']  == 1].copy()
+    ```
+  </Step>
+
+  <Step title="Train Model B — Deep MLP">
+    An `MLPClassifier` with two 64-unit layers sandwiching a 128-unit layer is trained on seven complex features drawn only from the intersection candidates.
+
+    ```python
+    complex_features = [
+        'len_base2',
+        'sum_base2',
+        'ratio_base2',
+        'ratio_base10',
+        'distance_from_max_sum',
+        'last_digit_base210',
+        'last_digit_base30',
+    ]
+
+    model_b = MLPClassifier(
+        hidden_layer_sizes=(64, 128, 64),
+        activation='relu',
+        max_iter=1000,
+        random_state=42,
+    )
+    model_b.fit(X_train_dnn, y_train_dnn)
+    ```
+  </Step>
+
+  <Step title="Combine predictions and evaluate">
+    Model A's predictions act as a gate. Numbers Model A calls composite are assigned `0` directly; numbers Model A calls prime are re-scored by Model B.
+
+    ```python
+    final_test_preds = []
+    dnn_idx = 0
+
+    for a_pred in test_preds_a:
+        if a_pred == 0:
+            final_test_preds.append(0)
+        else:
+            final_test_preds.append(test_preds_b[dnn_idx])
+            dnn_idx += 1
+    ```
+
+    Final ensemble accuracy and a full `sklearn` classification report are printed.
+  </Step>
+</Steps>
+
+### Expected output
+
+```
+Generating Multi-Dimensional Dataset (1 to 20,000)...
+Training Base-System Filter (Model A)...
+Model A Test Accuracy (Extrapolating 10k-20k): XX.XX%
+
+Model A successfully filtered down the 10,000 test numbers to just N 'Intersection' candidates!
+Training Deep Neural Network on the N hardest numbers...
+
+--- FINAL ENSEMBLE EXTRAPOLATION RESULTS (10,001 to 20,000) ---
+Predicting completely unseen numbers using only non-divisional dimensions.
+Overall Ensemble Accuracy: XX.XX%
+
+Detailed Report:
+              precision    recall  f1-score   support
+
+   Composite       x.xx      x.xx      x.xx      xxxx
+       Prime       x.xx      x.xx      x.xx       xxx
+
+    accuracy                           x.xx     10000
+   macro avg       x.xx      x.xx      x.xx     10000
+weighted avg       x.xx      x.xx      x.xx     10000
+```
+
+### Feature lists
+
+**Filter features (Model A)**
+
+| Feature | Description |
+|---|---|
+| `last_digit_base6` | `n % 6` |
+| `last_digit_base30` | `n % 30` |
+| `sum_base3` | Sum of digits of `n` in base 3 |
+| `sum_base6` | Sum of digits of `n` in base 6 |
+| `sum_base10` | Sum of digits of `n` in base 10 |
+| `is_even_length_palindrome` | Whether `n` is a palindrome with an even digit count |
+
+**Complex features (Model B)**
+
+| Feature | Description |
+|---|---|
+| `len_base2` | Number of binary digits in `n` |
+| `sum_base2` | Sum of binary digits (popcount) of `n` |
+| `ratio_base2` | `sum_base2 / len_base2` |
+| `ratio_base10` | Average decimal digit value |
+| `distance_from_max_sum` | `9 * len_base10 - sum_base10` |
+| `last_digit_base210` | `n % 210` (primorial of 2·3·5·7) |
+| `last_digit_base30` | `n % 30` |

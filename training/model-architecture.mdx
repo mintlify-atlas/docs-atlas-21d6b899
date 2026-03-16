@@ -1,0 +1,172 @@
+---
+title: 'Model architecture'
+description: 'The two-stage ensemble design: a Decision Tree base-system filter followed by a Deep MLP for resolving intersections.'
+---
+
+The ensemble uses two models in sequence. No single model is sufficient because primes and composites share identical low-dimensional footprints at the "intersection" — values where cheap modular rules cannot separate them. The two-stage design exploits each model's strengths.
+
+## Why a single model fails
+
+Many composites are instantly identifiable: any even number greater than 2, any multiple of 3 or 5, any number ending in 0. A shallow tree eliminates roughly 73% of composites using only last-digit and divisibility rules.
+
+The remaining candidates — the "intersections" — are numbers that *look* prime under simple rules but may not be. These require heavier computation: Fermat pseudoprime tests, distance-to-square geometry, and remainder-chain analysis. Throwing all of these features at a single model on the full dataset wastes capacity and adds noise.
+
+## Pipeline overview
+
+```
+Input number N
+       │
+       ▼
+┌─────────────────────────────┐
+│  Model A: Base-System Filter │
+│  DecisionTreeClassifier      │
+│  (last digits + divisibility)│
+└────────────┬────────────────┘
+             │
+      ┌──────┴──────┐
+      │             │
+  Composite      Unsure / Prime
+  (prob < 0.01)  (prob ≥ 0.01)
+      │             │
+  Output 0         ▼
+          ┌──────────────────┐
+          │ Model B: Deep MLP │
+          │ MLPClassifier     │
+          │ (fractal features)│
+          └────────┬─────────┘
+                   │
+          prob > 0.9 → Output 1 (Prime)
+          prob ≤ 0.9 → Output 0 (Composite)
+```
+
+<Tabs>
+  <Tab title="Model A — Base-System Filter">
+
+### DecisionTreeClassifier
+
+Model A is a shallow decision tree trained on six cheap modular features. Its role is to eliminate the ~73% of candidates that are obviously composite, without any expensive computation.
+
+```python final_ensemble_test.py
+filter_features = [
+    'last_digit_base6', 'last_digit_base30',
+    'is_indivisible_by_2', 'is_indivisible_by_3',
+    'is_indivisible_by_5', 'is_indivisible_by_7'
+]
+
+model_a = DecisionTreeClassifier(
+    max_depth=5,
+    class_weight={0: 20, 1: 1},
+    random_state=42
+)
+model_a.fit(train_df[filter_features], train_df['is_prime'])
+```
+
+**Hyperparameters:**
+
+| Parameter | Value | Rationale |
+|-----------|-------|-----------|
+| `max_depth` | `5` | Shallow enough to learn bold mathematical laws (mod 2, mod 3, mod 5) without overfitting |
+| `class_weight` | `{0: 20, 1: 1}` | Makes false positives 20× more costly, forcing the tree to pass ambiguous cases to Model B |
+| `random_state` | `42` | Reproducibility |
+
+**Features explained:**
+
+- `last_digit_base6` — captures `n % 6`; primes > 3 must be ≡ 1 or 5 mod 6
+- `last_digit_base30` — captures `n % 30`; the primorial base (product of 2×3×5)
+- `is_indivisible_by_2/3/5/7` — binary flags from `neural_encoder.py`; note that primes 2, 3, 5, 7 are treated as indivisible by themselves
+
+After training, Model A assigns a composite probability to every candidate. Numbers with `predict_proba[:, 1] >= 0.01` are forwarded to Model B as "intersections". The low threshold (0.01) is intentional: the heavy class weighting already makes Model A reluctant to call anything prime, so the intersection set remains large enough to catch all real primes.
+
+  </Tab>
+  <Tab title="Model B — Deep MLP">
+
+### MLPClassifier
+
+Model B is a three-hidden-layer perceptron trained only on the intersection candidates that Model A could not confidently classify as composite. It uses 13 heavier features including Fermat pseudoprime flags and fractal remainder geometry.
+
+```python final_ensemble_test.py
+complex_features = [
+    'fermat_flag_base2', 'fermat_flag_base3',
+    'fermat_flag_base5', 'fermat_flag_base7',
+    'dist_to_square', 'modular_inverse_2',
+    'is_rem_9_prime', 'is_rem_30_prime',
+    'rem_30_base3_sum', 'rem_9_bin_pop',
+    'ratio_base10', 'distance_from_max_sum',
+    'is_palindrome_10'
+]
+
+model_b = MLPClassifier(
+    hidden_layer_sizes=(64, 128, 64),
+    activation='relu',
+    max_iter=2000,
+    random_state=42
+)
+model_b.fit(
+    train_intersections[complex_features],
+    train_intersections['is_prime']
+)
+```
+
+**Hyperparameters:**
+
+| Parameter | Value | Rationale |
+|-----------|-------|-----------|
+| `hidden_layer_sizes` | `(64, 128, 64)` | Bottleneck-then-expand-then-compress; allows the net to form an intermediate dense representation |
+| `activation` | `'relu'` | Standard for multi-layer perceptrons |
+| `max_iter` | `2000` | Extended training because the intersection set is smaller and harder |
+| `random_state` | `42` | Reproducibility |
+
+**Features explained:**
+
+- `fermat_flag_base2/3/5/7` — binary Fermat witnesses: `pow(b, n-1, n) == 1`; all primes pass, most composites fail at least one
+- `dist_to_square` — `ceil(sqrt(n))² - n`; structural distance to the nearest perfect square
+- `modular_inverse_2` — `(n+1) // 2` for odd n; the modular reciprocal of 2
+- `is_rem_9_prime`, `is_rem_30_prime` — whether the remainders `n % 9` and `n % 30` are themselves prime
+- `rem_30_base3_sum` — digit sum of `n % 30` in base 3
+- `rem_9_bin_pop` — popcount (number of set bits) of `n % 9`
+- `ratio_base10`, `distance_from_max_sum` — digit-sum statistics relative to the theoretical maximum for that digit length
+- `is_palindrome_10` — whether the decimal representation is a palindrome
+
+**Probability threshold:**
+
+Model B only outputs `1` (Prime) when its confidence exceeds 90%:
+
+```python final_ensemble_test.py
+b_probs = model_b.predict_proba(X_b)[:, 1]
+b_preds = (b_probs > 0.9).astype(int)
+```
+
+This high threshold reduces false positives at the cost of some recall — the ensemble favors precision over recall when classifying primes.
+
+  </Tab>
+</Tabs>
+
+## Ensemble combination logic
+
+The two models combine through a simple handoff:
+
+```python final_ensemble_test.py
+probs_a = model_a.predict_proba(X_test_filter)[:, 1]
+
+final_preds = np.zeros(len(test_df))
+unsure_mask = probs_a >= 0.01
+
+if unsure_mask.sum() > 0:
+    X_b = test_df[unsure_mask][complex_features]
+    b_probs = model_b.predict_proba(X_b)[:, 1]
+    b_preds = (b_probs > 0.9).astype(int)
+    final_preds[unsure_mask] = b_preds
+```
+
+- If Model A assigns composite probability ≥ 99% (`proba[:, 1] < 0.01`): output `0` immediately.
+- Otherwise: forward to Model B and output `1` only if `predict_proba > 0.9`.
+
+## The cyclical modulos fix for infinite scale
+
+A key design constraint: features must not grow unboundedly as `n` increases. Raw digit sums grow with the number of digits. The encoder addresses this with modular normalization:
+
+- `sum_base3_mod = sum_of_digits(n, 3) % 2` — bounded to {0, 1}
+- `sum_base6_mod = sum_of_digits(n, 6) % 5` — bounded to {0, 1, 2, 3, 4}
+- `sum_base10_mod = sum_of_digits(n, 10) % 9` — bounded to {0, 1, 2, 3, 4, 5, 6, 7, 8}
+
+Using `mod(B-1)` (where B is the base) instead of raw digit sums exploits the divisibility law: the digit sum of `n` in base `B` is congruent to `n mod (B-1)`. This makes the feature periodic and scale-invariant — the same feature values recur at the same structural positions regardless of how large `n` gets.

@@ -1,0 +1,106 @@
+---
+title: "Base Systems and Primorial Dictatorships"
+description: "How changing the number base reveals rigid structural constraints on where primes can exist."
+---
+
+One of the most powerful discoveries in this project is what happens when you look at primes in different number bases. The last digit of a number in a given base is exactly equal to `N mod B`. By choosing the right base — specifically, **primorial bases** — the last digit alone eliminates the vast majority of composite numbers.
+
+## The last digit dictatorship
+
+In any base B, a number is divisible by any prime factor of B if and only if its last digit is divisible by that factor. This means the last digit in Base-B acts as a simultaneous divisibility test for all prime factors of B at once.
+
+The effect is dramatic:
+
+| Base | Primorial | Prime endings | Elimination rate |
+|:-----|:----------|:--------------|:-----------------|
+| Base-10 | — | {1, 3, 7, 9} | 60% eliminated |
+| Base-6 | 2×3 | {1, 5} | **66% eliminated** |
+| Base-30 | 2×3×5 | {1, 7, 11, 13, 17, 19, 23, 29} | **73.3% eliminated** |
+
+Each row applies to primes above the base value itself (e.g., Base-30 applies to primes > 30).
+
+### Base-10: 4 valid endings
+
+In our standard decimal system, any prime greater than 5 can only end in `{1, 3, 7, 9}`. The digits `{0, 2, 4, 5, 6, 8}` are eliminated because:
+- Even endings (0, 2, 4, 6, 8) → divisible by 2
+- Ending in 5 → divisible by 5
+
+Four valid endings out of 10 means 60% of all integers are eliminated by the last digit alone.
+
+### Base-6: 2 valid endings (66% eliminated)
+
+Base-6 has digits `{0, 1, 2, 3, 4, 5}`. Since 6 = 2×3:
+- Endings `{0, 2, 4}` → divisible by 2
+- Ending `3` → divisible by 3
+
+Only `{1, 5}` survive. **All primes greater than 5 must end in 1 or 5 when written in Base-6.** This is not a heuristic — it is a mathematical certainty. By switching to Base-6, you instantly eliminate 66% of all integers from consideration using a single digit.
+
+### Base-30: 8 valid endings (73.3% eliminated)
+
+Base-30 uses 30 = 2×3×5 as its base — the **primorial** of the first three primes. Digits `{0, ..., 29}`. Any ending that shares a factor with 30 is ruled out:
+- Even endings → divisible by 2
+- Endings divisible by 3 → divisible by 3
+- Endings divisible by 5 → divisible by 5
+
+Exactly 8 endings survive: `{1, 7, 11, 13, 17, 19, 23, 29}`. These are precisely the integers from 1 to 29 that are coprime to 30.
+
+**All primes greater than 30 must end in one of these 8 digits in Base-30.** A single `last_digit_base30` feature achieves 73.3% elimination mathematically, with zero false negatives.
+
+<Note>
+**The Primorial Pattern:** Base-6 = 2×3, Base-30 = 2×3×5, Base-210 = 2×3×5×7. Each primorial base extends the elimination guarantee to include the next prime factor. The AI uses `last_digit_base6` and `last_digit_base30` as features, providing two levels of this structural constraint simultaneously.
+</Note>
+
+## The digit sum ↔ modulo equivalence law
+
+A second fundamental discovery links digit sums directly to modular arithmetic:
+
+> **Law:** The sum of the digits of N written in Base-B always has the same remainder as `N mod (B-1)`.
+
+This means that computing a digit sum in Base-B is mathematically equivalent to computing `N mod (B-1)`. The AI can reach the same divisibility conclusion through two structurally different pathways.
+
+| Base | Digit sum ≡ | Divisibility rule |
+|:-----|:------------|:------------------|
+| Base-3 | `N mod 2` | If Base-3 digit sum is even → N is even (composite, unless N=2) |
+| Base-6 | `N mod 5` | If Base-6 digit sum is divisible by 5 → N divisible by 5 (composite, unless N=5) |
+| Base-10 | `N mod 9` (and mod 3) | Classic "casting out nines" — if digit sum divisible by 9 or 3, N is composite |
+| Base-16 | `N mod 15` (and mod 3, mod 5) | Hexadecimal digit sum divisible by 15, 3, or 5 → composite |
+
+The three digit sum features in `extract_all_dimensions()` directly encode this law:
+
+```python
+dimensions['sum_base3_mod'] = sum_of_digits(n, 3) % 2   # ≡ N mod 2
+dimensions['sum_base6_mod'] = sum_of_digits(n, 6) % 5   # ≡ N mod 5
+dimensions['sum_base10_mod'] = sum_of_digits(n, 10) % 9 # ≡ N mod 9
+```
+
+**Why provide both the direct modulo and the digit sum?** Because neural networks can discover non-linear relationships between spatially different representations of the same property. Presenting both `last_digit_base6` (which encodes mod 2 and mod 3 via the last digit) and `sum_base3_mod` (which encodes mod 2 via digit sum) gives the model two geometric angles on the same mathematical truth.
+
+## The modulo shift threshold law
+
+The base-system features are not static — they become insufficient as numbers grow. The exact threshold where a new prime dimension becomes necessary follows a precise law:
+
+> **Law:** A model tracking divisibility by all primes up to P_k will fail at exactly P_k² — the square of the next prime.
+
+This is because any composite smaller than P_k² must have a prime factor smaller than P_k (if it had two factors both ≥ P_k, their product would be ≥ P_k²). So the current modulo set will always catch it. The first number that can slip through consists entirely of factors ≥ P_k, and that is P_k × P_k.
+
+| Primes tracked | First failure | Missing dimension |
+|:---------------|:-------------|:------------------|
+| (none) | 4 = 2×2 | Need mod_2 |
+| mod_2 | 9 = 3×3 | Need mod_3 |
+| mod_2, mod_3 | 25 = 5×5 | Need mod_5 |
+| mod_2, mod_3, mod_5 | 49 = 7×7 | Need mod_7 |
+| mod_2…mod_7 | 121 = 11×11 | Need mod_11 |
+| mod_2…mod_11 | 169 = 13×13 | Need mod_13 |
+| mod_2…mod_13 | 289 = 17×17 | Need mod_17 |
+
+**Practical implication:** To guarantee perfect separation for all numbers up to 10,000, you need dimensions up to the largest prime whose square is less than 10,000. Since 97² = 9,409 < 10,000 and 101² = 10,201 > 10,000, you need dimensions up to mod_97.
+
+<Note>
+The AI does not include explicit mod_11, mod_13, ... mod_97 features. Instead, it compensates by learning non-linear patterns in the fractal remainder geometry and Fermat witness features that capture these higher-order relationships without requiring an explicit dimension per prime. See [Remainder Geometry](/concepts/remainder-geometry) for how this works.
+</Note>
+
+## Why this matters for the model
+
+These base-system features form the backbone of **Model A (the Base-System Filter)**, the first stage of the ensemble. Model A is a shallow decision tree (max depth 5) trained exclusively on last-digit and digit-sum features. Its role is to mathematically eliminate the ~73% of numbers that violate the primorial ending rules — with absolute certainty and zero false negatives.
+
+Only numbers that survive Model A proceed to the deep neural network. This means the MLP only ever sees numbers that are already structurally consistent with primality, dramatically reducing the problem complexity for Stage 2.

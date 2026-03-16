@@ -1,0 +1,251 @@
+---
+title: 'neural_encoder'
+description: 'The master feature engineering engine that converts any integer N into its full set of arithmetic dimensions.'
+---
+
+The `neural_encoder` module provides helper functions for working with digit representations in arbitrary bases, and the main `extract_all_dimensions` function that generates the full feature vector for a given integer.
+
+---
+
+## `sum_of_digits`
+
+Computes the sum of the digits of `n` when written in the given base.
+
+```python
+def sum_of_digits(n, base):
+    if n == 0: return 0
+    total = 0
+    while n > 0:
+        total += n % base
+        n //= base
+    return total
+```
+
+**Parameters**
+
+<ParamField path="n" type="int" required>
+  The integer to process. Returns `0` immediately if `n` is `0`.
+</ParamField>
+
+<ParamField path="base" type="int" required>
+  The numeric base in which `n` is represented before summing its digits.
+</ParamField>
+
+**Returns**
+
+<ResponseField name="total" type="int">
+  The sum of all digits of `n` expressed in `base`.
+</ResponseField>
+
+**Example**
+
+```python
+sum_of_digits(17, 2)  # 17 = 0b10001 → digits [1, 0, 0, 0, 1] → sum = 2
+# → 2
+
+sum_of_digits(17, 10) # 17 → digits [1, 7] → sum = 8
+# → 8
+```
+
+---
+
+## `num_digits`
+
+Counts the number of digits that `n` has when written in the given base.
+
+```python
+def num_digits(n, base):
+    if n == 0: return 1
+    count = 0
+    while n > 0:
+        count += 1
+        n //= base
+    return count
+```
+
+**Parameters**
+
+<ParamField path="n" type="int" required>
+  The integer to process. Returns `1` immediately if `n` is `0` (zero has one digit in any base).
+</ParamField>
+
+<ParamField path="base" type="int" required>
+  The numeric base in which `n` is represented.
+</ParamField>
+
+**Returns**
+
+<ResponseField name="count" type="int">
+  The number of digits in `n` when expressed in `base`.
+</ResponseField>
+
+**Example**
+
+```python
+num_digits(17, 2)   # 17 = 0b10001 → 5 binary digits
+# → 5
+
+num_digits(17, 10)  # 17 → 2 decimal digits
+# → 2
+```
+
+---
+
+## `extract_all_dimensions`
+
+The master feature engineering engine. Generates all engineered mathematical dimensions for a single integer `n`, returning them as a flat dictionary.
+
+```python
+def extract_all_dimensions(n):
+    """
+    The Master Engine: Generates all engineered mathematical dimensions for a single number N.
+    """
+    if n < 1:
+        return None
+    ...
+```
+
+**Parameters**
+
+<ParamField path="n" type="int" required>
+  The integer to encode. Must be `>= 1`. If `n < 1`, the function returns `None`.
+</ParamField>
+
+**Returns**
+
+A `dict` with 24 keys, or `None` if `n < 1`.
+
+<ResponseField name="last_digit_base6" type="int">
+  `n % 6`. Captures both mod-2 and mod-3 residue information in a single feature.
+</ResponseField>
+
+<ResponseField name="last_digit_base10" type="int">
+  `n % 10`. The standard last decimal digit.
+</ResponseField>
+
+<ResponseField name="last_digit_base30" type="int">
+  `n % 30`. The primorial base residue; encodes mod-2, mod-3, and mod-5 simultaneously.
+</ResponseField>
+
+<ResponseField name="sum_base3_mod" type="int">
+  Sum of digits of `n` in base 3, modulo 2.
+</ResponseField>
+
+<ResponseField name="sum_base6_mod" type="int">
+  Sum of digits of `n` in base 6, modulo 5.
+</ResponseField>
+
+<ResponseField name="sum_base10_mod" type="int">
+  Sum of digits of `n` in base 10, modulo 9. Equivalent to `n % 9` by the digital root property.
+</ResponseField>
+
+<ResponseField name="is_indivisible_by_2" type="int">
+  `1` if `n` is odd or `n == 2`, otherwise `0`.
+</ResponseField>
+
+<ResponseField name="is_indivisible_by_3" type="int">
+  `1` if `n` is not divisible by 3 or `n == 3`, otherwise `0`.
+</ResponseField>
+
+<ResponseField name="is_indivisible_by_5" type="int">
+  `1` if `n` is not divisible by 5 or `n == 5`, otherwise `0`.
+</ResponseField>
+
+<ResponseField name="is_indivisible_by_7" type="int">
+  `1` if `n` is not divisible by 7 or `n == 7`, otherwise `0`.
+</ResponseField>
+
+<ResponseField name="fermat_flag_base2" type="int">
+  `1` if `pow(2, n-1, n) == 1` (Fermat primality witness base 2), otherwise `0`. Always `0` for `n <= 2`.
+</ResponseField>
+
+<ResponseField name="fermat_flag_base3" type="int">
+  `1` if `pow(3, n-1, n) == 1` (Fermat primality witness base 3), otherwise `0`. Always `0` for `n <= 2`.
+</ResponseField>
+
+<ResponseField name="fermat_flag_base5" type="int">
+  `1` if `pow(5, n-1, n) == 1` (Fermat primality witness base 5), otherwise `0`. Always `0` for `n <= 2`.
+</ResponseField>
+
+<ResponseField name="fermat_flag_base7" type="int">
+  `1` if `pow(7, n-1, n) == 1` (Fermat primality witness base 7), otherwise `0`. Always `0` for `n <= 2`.
+</ResponseField>
+
+<ResponseField name="dist_to_square" type="int">
+  `ceil(sqrt(n))^2 - n`. The distance from `n` to the next perfect square at or above it.
+</ResponseField>
+
+<ResponseField name="modular_inverse_2" type="int">
+  `(n + 1) // 2` when `n` is odd (the modular inverse of 2 modulo `n` for odd `n`). `0` when `n` is even.
+</ResponseField>
+
+<ResponseField name="is_rem_9_prime" type="int">
+  `1` if `n % 9` is a prime number, otherwise `0`.
+</ResponseField>
+
+<ResponseField name="is_rem_30_prime" type="int">
+  `1` if `n % 30` is a prime number, otherwise `0`.
+</ResponseField>
+
+<ResponseField name="rem_30_base3_sum" type="int">
+  Sum of digits of `n % 30` in base 3.
+</ResponseField>
+
+<ResponseField name="rem_9_bin_pop" type="int">
+  Popcount (number of set bits) of `n % 9` in binary.
+</ResponseField>
+
+<ResponseField name="is_palindrome_10" type="int">
+  `1` if `n` reads the same forwards and backwards in decimal, otherwise `0`.
+</ResponseField>
+
+<ResponseField name="len_base10" type="int">
+  Number of decimal digits in `n`.
+</ResponseField>
+
+<ResponseField name="ratio_base10" type="float">
+  `sum_of_digits(n, 10) / len_base10`. Average decimal digit value.
+</ResponseField>
+
+<ResponseField name="distance_from_max_sum" type="int">
+  `9 * len_base10 - sum_of_digits(n, 10)`. How far the digit sum is from the theoretical maximum for a number with the same number of digits.
+</ResponseField>
+
+**Example**
+
+```python
+from neural_encoder import extract_all_dimensions
+
+dims = extract_all_dimensions(17)
+for k, v in dims.items():
+    print(f"  {k}: {v}")
+```
+
+Output:
+
+```
+  last_digit_base6: 5
+  last_digit_base10: 7
+  last_digit_base30: 17
+  sum_base3_mod: 1
+  sum_base6_mod: 4
+  sum_base10_mod: 8
+  is_indivisible_by_2: 1
+  is_indivisible_by_3: 1
+  is_indivisible_by_5: 1
+  is_indivisible_by_7: 1
+  fermat_flag_base2: 1
+  fermat_flag_base3: 1
+  fermat_flag_base5: 1
+  fermat_flag_base7: 1
+  dist_to_square: 2
+  modular_inverse_2: 9
+  is_rem_9_prime: 0
+  is_rem_30_prime: 1
+  rem_30_base3_sum: 4
+  rem_9_bin_pop: 0
+  is_palindrome_10: 0
+  len_base10: 2
+  ratio_base10: 4.0
+  distance_from_max_sum: 10
+```

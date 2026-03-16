@@ -1,0 +1,199 @@
+---
+title: 'Running training'
+description: 'Step-by-step instructions for training the ensemble and running full evaluations.'
+---
+
+## Prerequisites
+
+- Python 3.8 or later
+- The following packages:
+
+```bash
+pip install pandas numpy scikit-learn sympy
+```
+
+All source files (`neural_net.py`, `final_ensemble_test.py`, `neural_encoder.py`) must be in the same directory. `neural_encoder.py` is imported by both training scripts.
+
+<Warning>
+  Data generation is the dominant bottleneck. `sympy.isprime` is called once per integer, and it uses a deterministic primality proof for each call. Generating 10,000 integers takes roughly 5–15 seconds. Generating the 50k–60k and 100k–110k ranges (10,001 integers each) takes proportionally longer because `isprime` is slower for larger numbers. Expect 3–10 minutes total for a full `run_evaluation()` run on a standard laptop.
+</Warning>
+
+## Training with `build_ensemble()`
+
+`neural_net.py` trains on 1–20,000 and evaluates on the held-out 10,001–20,000 range.
+
+<Steps>
+  <Step title="Run the script">
+    ```bash
+    python neural_net.py
+    ```
+  </Step>
+
+  <Step title="Watch data generation">
+    The first output line confirms generation has started:
+
+    ```
+    Generating Multi-Dimensional Dataset (1 to 20,000)...
+    ```
+
+    This step encodes all 20,000 integers. No progress bar is printed; wait for it to complete.
+  </Step>
+
+  <Step title="Model A trains and reports">
+    ```
+    ========================================================
+    PHASE 1: THE BASE-SYSTEM FILTER (Clear Rules)
+    ========================================================
+    Training Base-System Filter (Model A)...
+    Model A Test Accuracy (Extrapolating 10k-20k): XX.XX%
+    Model A successfully filtered down the 10,000 test numbers to just NNN 'Intersection' candidates!
+    ```
+  </Step>
+
+  <Step title="Model B trains on intersections">
+    ```
+    ========================================================
+    PHASE 2: THE DEEP NEURAL NETWORK (Resolving Intersections)
+    ========================================================
+    Training Deep Neural Network on the NNN hardest numbers...
+    ```
+  </Step>
+
+  <Step title="Read the ensemble result">
+    ```
+    --- FINAL ENSEMBLE EXTRAPOLATION RESULTS (10,001 to 20,000) ---
+    Predicting completely unseen numbers using only non-divisional dimensions.
+    Overall Ensemble Accuracy: XX.XX%
+
+    Detailed Report:
+                  precision    recall  f1-score   support
+
+       Composite       X.XX      X.XX      X.XX      NNNN
+           Prime       X.XX      X.XX      X.XX       NNN
+
+        accuracy                           X.XX     10000
+       macro avg       X.XX      X.XX      X.XX     10000
+    weighted avg       X.XX      X.XX      X.XX     10000
+    ```
+  </Step>
+</Steps>
+
+## Running full evaluation with `run_evaluation()`
+
+`final_ensemble_test.py` trains on 1–10,000 and then evaluates on four separate ranges including far extrapolation to 100k–110k.
+
+<Steps>
+  <Step title="Run the script">
+    ```bash
+    python final_ensemble_test.py
+    ```
+  </Step>
+
+  <Step title="Data generation for all ranges">
+    The script generates five separate datasets sequentially:
+
+    ```
+    ========================================================
+    FINAL FRACTAL ENSEMBLE TEST: Remainder Geometry Edition
+    ========================================================
+
+    Generating data for 1 to 10000...
+    Generating data for 10001 to 20000...
+    Generating data for 50000 to 60000...
+    Generating data for 100000 to 110000...
+    ```
+  </Step>
+
+  <Step title="Model A and Model B train">
+    ```
+    Training Base-System Filter (Model A)...
+    Training DNN (Model B) with Fractal Features on NNN training intersections...
+    ```
+  </Step>
+
+  <Step title="Results for each evaluation range">
+    One block is printed per range:
+
+    ```
+    --- RESULTS: Train Baseline (1-10k) ---
+    Overall Accuracy: XX.XX%
+    ...
+
+    --- RESULTS: Phase 5 Extrapolation (10k-20k) ---
+    Overall Accuracy: XX.XX%
+    ...
+
+    --- RESULTS: Phase 5 Far Extrapolation (50k-60k) ---
+    Overall Accuracy: XX.XX%
+    ...
+
+    --- RESULTS: Phase 5 Infinite Scale (100k-110k) ---
+    Overall Accuracy: XX.XX%
+    ...
+    ```
+
+    Maintaining accuracy in the 100k–110k block confirms that the learned features generalize at scale.
+  </Step>
+</Steps>
+
+## Inspecting a single number
+
+You can call `extract_all_dimensions()` directly to see every feature value for a specific integer:
+
+```python
+from neural_encoder import extract_all_dimensions
+
+result = extract_all_dimensions(17)
+for key, value in result.items():
+    print(f"  {key}: {value}")
+```
+
+The `__main__` block in `neural_encoder.py` runs exactly this for n=17:
+
+```bash
+python neural_encoder.py
+```
+
+Output:
+```
+Test extraction for N=17:
+  last_digit_base6: 5
+  last_digit_base10: 7
+  last_digit_base30: 17
+  sum_base3_mod: 0
+  sum_base6_mod: 2
+  sum_base10_mod: 8
+  is_indivisible_by_2: 1
+  is_indivisible_by_3: 1
+  is_indivisible_by_5: 1
+  is_indivisible_by_7: 1
+  fermat_flag_base2: 1
+  fermat_flag_base3: 1
+  fermat_flag_base5: 1
+  fermat_flag_base7: 1
+  dist_to_square: 0
+  modular_inverse_2: 9
+  is_rem_9_prime: 0
+  is_rem_30_prime: 1
+  rem_30_base3_sum: 2
+  rem_9_bin_pop: 3
+  is_palindrome_10: 0
+  len_base10: 2
+  ratio_base10: 4.0
+  distance_from_max_sum: 10
+```
+
+## Extending the feature set
+
+The most direct path to improving recall is adding more prime-factor dimensions to `extract_all_dimensions()`. The current set captures divisibility by 2, 3, 5, and 7. Adding mod 11 and mod 13 would extend the primorial coverage:
+
+```python neural_encoder.py
+# Existing
+dimensions['is_indivisible_by_7'] = int(n % 7 != 0 or n == 7)
+
+# Add these
+dimensions['is_indivisible_by_11'] = int(n % 11 != 0 or n == 11)
+dimensions['is_indivisible_by_13'] = int(n % 13 != 0 or n == 13)
+```
+
+These new flags would also need to be added to the `filter_features` list in `final_ensemble_test.py` and potentially retested in `model_diagnostics.py` to confirm they improve the Model A filter rate before retraining.

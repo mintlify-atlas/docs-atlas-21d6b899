@@ -1,0 +1,108 @@
+---
+title: "Remainder Geometry and Fractal Primality"
+description: "How the internal structure of remainders in alternative base systems reveals prime sanctuaries with dramatically elevated probability."
+---
+
+After the base-system filter eliminates ~73% of numbers, the deep neural network must resolve the remaining "intersections" — numbers that look structurally identical under the primorial base rules. The key breakthrough was discovering that the **internal structure of remainders**, when viewed through additional base systems, reveals fractal patterns that sharply concentrate prime probability.
+
+## The prime feedback effect
+
+The first discovery is that the **primality of a remainder is itself a probabilistic signal** for the primality of the original number.
+
+If `N mod M` is a prime number, N itself is statistically more likely to be prime. The reason is geometric: a prime remainder means N has "avoided" the composite footprints of the base-M system. Composites tend to cluster around remainder values that are themselves composite.
+
+| Modulo | Probability shift when remainder is prime |
+|:-------|:------------------------------------------|
+| Modulo 7 | **+3.93%** |
+| Modulo 9 | **+2.95%** |
+| Modulo 13 | **+1.95%** |
+| Modulo 31 | **+0.98%** |
+
+These shifts are measured against the baseline prime density across the first 10,000 integers (~12.27%). While no individual signal is decisive, the pattern is consistent and monotonically decreasing with the modulo size — larger modulos produce smaller but still measurable signals.
+
+The `neural_encoder.py` encodes this as two binary features:
+
+```python
+rem_9  = n % 9
+rem_30 = n % 30
+
+dimensions['is_rem_9_prime']  = int(isprime(rem_9))
+dimensions['is_rem_30_prime'] = int(isprime(rem_30))
+```
+
+## System geometry: remainders in other bases
+
+The second — and more powerful — discovery came from converting remainders themselves into different number bases and examining their digit structure.
+
+The question: does the way a remainder "looks" in Base-3 or in binary tell us anything about whether the original number is prime?
+
+The answer is yes, dramatically so.
+
+<Tip>
+**Fractal primality:** Primes don't just exist in Base-10 — they leave a footprint across every numbering system. By cross-referencing how a remainder looks in a second base, you can identify "prime sanctuaries" where the probability of finding a prime is nearly 3× the baseline.
+</Tip>
+
+## Clarity clusters
+
+By analyzing `N mod 30` and `N mod 9` across the first 10,000 integers, the following high-density clusters were identified:
+
+| Feature | Condition | Prime density | Lift vs baseline |
+|:--------|:----------|:-------------|:-----------------|
+| Sum of (N mod 30) in Base-3 | = 5 | **30.83%** | **+150.8%** |
+| Sum of (N mod 30) in Base-3 | = 3 | **28.77%** | **+134.1%** |
+| Parity of (N mod 30) | ODD | **24.56%** | **+99.8%** |
+| Binary popcount of (N mod 30) | = 4 | **23.12%** | **+88.1%** |
+
+Baseline prime density (numbers 1–10,000): ~12.27%.
+
+The most powerful signal — a Base-3 digit sum of 5 for the mod-30 remainder — nearly triples the probability of primality. This is not a weak statistical trend; it is a structural pattern.
+
+### Understanding the top signal
+
+The feature `rem_30_base3_sum` computes:
+1. Take `N mod 30` — the last "digit" in Base-30
+2. Write that remainder in Base-3
+3. Sum the Base-3 digits
+
+For example, if N mod 30 = 17:
+- 17 in Base-3 = `122` (1×9 + 2×3 + 2×1)
+- Base-3 digit sum = 1+2+2 = **5**
+
+N = 17 is prime, and it lands in the highest-density cluster.
+
+This is encoded directly in `neural_encoder.py`:
+
+```python
+rem_30 = n % 30
+dimensions['rem_30_base3_sum'] = sum_of_digits(rem_30, 3)
+```
+
+## Silent zones
+
+Equally important are the "silent zones" — remainder structures where primality is near-zero:
+
+| Condition | Prime density |
+|:----------|:--------------|
+| N mod 30 is **EVEN** | **0.02%** |
+| Binary popcount of (N mod 9) = 0 | **0%** |
+
+An even value for `N mod 30` means N itself is even — composite by definition (except N=2). The 0.02% residual consists almost entirely of the number 2 itself.
+
+A binary popcount of 0 for `N mod 9` means `N mod 9 == 0`, i.e., N is divisible by 9 — also composite. The 0% density here is exact: no prime is divisible by 9.
+
+These two conditions are encoded as:
+
+```python
+rem_9 = n % 9
+dimensions['rem_9_bin_pop'] = bin(rem_9).count('1')  # 0 means rem_9 == 0
+```
+
+## The fractal interpretation
+
+The pattern across all four remainder geometry features reveals something deeper than statistical correlation. Primes are not randomly distributed across the integers — they occupy specific structural positions in every numbering system simultaneously.
+
+When you look at `N mod 30` in Base-3, you are essentially applying **two layers of base transformation** to N: first reducing it modulo 30 (a primorial), then examining the digit structure of that remainder in a different base. Each layer filters the structural information differently, and the intersection of those filters lands on regions of dramatically concentrated prime probability.
+
+This is the fractal nature of primality: the same clustering that appears in Base-10 (only certain last digits) reappears at a finer scale when you examine the remainders themselves in other bases.
+
+The four remainder geometry features in `extract_all_dimensions()` — `is_rem_9_prime`, `is_rem_30_prime`, `rem_30_base3_sum`, and `rem_9_bin_pop` — give the deep neural network direct access to this fractal structure, allowing it to resolve intersections that pure modular arithmetic cannot separate.

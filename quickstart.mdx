@@ -1,80 +1,274 @@
 ---
 title: "Quickstart"
-description: "Start building awesome documentation in minutes"
+description: "Install dependencies and run your first prime prediction in minutes."
 ---
 
-## Get started in three steps
+Get the Prime Number Neural Network running locally and make your first prime prediction.
 
-Get your documentation site running locally and make your first customization.
+<Steps>
 
-### Step 1: Set up your local environment
+<Step title="Install dependencies">
 
-<AccordionGroup>
-  <Accordion icon="copy" title="Clone your docs locally">
-    During the onboarding process, you created a GitHub repository with your docs content if you didn't already have one. You can find a link to this repository in your [dashboard](https://dashboard.mintlify.com).
-    
-    To clone the repository locally so that you can make and preview changes to your docs, follow the [Cloning a repository](https://docs.github.com/en/repositories/creating-and-managing-repositories/cloning-a-repository) guide in the GitHub docs.
-  </Accordion>
-  <Accordion icon="rectangle-terminal" title="Start the preview server">
-    1. Install the Mintlify CLI: `npm i -g mint`
-    2. Navigate to your docs directory and run: `mint dev`
-    3. Open `http://localhost:3000` to see your docs live!
-    
-    <Tip>Your preview updates automatically as you edit files.</Tip>
-  </Accordion>
-</AccordionGroup>
+The project requires Python 3.8+ and four libraries. Install them with pip:
 
-### Step 2: Deploy your changes
+```bash
+pip install pandas numpy scikit-learn sympy
+```
 
-<AccordionGroup>
-  <Accordion icon="github" title="Install our GitHub app">
-    Install the Mintlify GitHub app from your [dashboard](https://dashboard.mintlify.com/settings/organization/github-app).
-    
-    Our GitHub app automatically deploys your changes to your docs site, so you don't need to manage deployments yourself.
-</Accordion>
-<Accordion icon="palette" title="Update your site name and colors">
-    For a first change, let's update the name and colors of your docs site.
+<Note>
+  `sympy` is used for ground-truth prime verification via `isprime()`, and also inside `extract_all_dimensions()` to compute fractal remainder features.
+</Note>
 
-    1. Open `docs.json` in your editor.
-    2. Change the `"name"` field to your project name.
-    3. Update the `"colors"` to match your brand.
-    4. Save and see your changes instantly at `http://localhost:3000`.
+</Step>
 
-    <Tip>Try changing the primary color to see an immediate difference!</Tip>
-  </Accordion>
-</AccordionGroup>
+<Step title="Explore a single number's dimensions">
 
-### Step 3: Go live
+Before training a model, you can inspect the raw feature vector that the encoder produces for any integer. Import `extract_all_dimensions` from `neural_encoder.py` and call it directly:
 
-<Accordion icon="rocket" title="Publish your docs">
-  1. Commit and push your changes.
-  2. Your docs will update and be live in moments!
-</Accordion>
+```python neural_encoder_demo.py
+from neural_encoder import extract_all_dimensions
+
+dims = extract_all_dimensions(97)
+for key, value in dims.items():
+    print(f"{key}: {value}")
+```
+
+Expected output for `n = 97`:
+
+```
+last_digit_base6: 1
+last_digit_base10: 7
+last_digit_base30: 7
+sum_base3_mod: 1
+sum_base6_mod: 1
+sum_base10_mod: 7
+is_indivisible_by_2: 1
+is_indivisible_by_3: 1
+is_indivisible_by_5: 1
+is_indivisible_by_7: 1
+fermat_flag_base2: 1
+fermat_flag_base3: 1
+fermat_flag_base5: 1
+fermat_flag_base7: 1
+dist_to_square: 3
+modular_inverse_2: 49
+is_rem_9_prime: 0
+is_rem_30_prime: 1
+rem_30_base3_sum: 3
+rem_9_bin_pop: 3
+is_palindrome_10: 0
+len_base10: 2
+ratio_base10: 8.0
+distance_from_max_sum: 10
+```
+
+<Tip>
+  All four `fermat_flag_base*` values being `1` is a strong signal that 97 is prime — Fermat's little theorem holds for true primes across every base.
+</Tip>
+
+The function returns `None` for `n < 1`, so always validate your input before encoding:
+
+```python
+dims = extract_all_dimensions(0)   # returns None
+dims = extract_all_dimensions(-5)  # returns None
+```
+
+</Step>
+
+<Step title="Train the two-stage ensemble">
+
+`neural_net.py` builds and evaluates the full ensemble. It generates a dataset from `1` to `20,000`, trains on the first half, and extrapolates to the second half without any random shuffling:
+
+<CodeGroup>
+
+```bash run directly
+python neural_net.py
+```
+
+```python import and call
+from neural_net import build_ensemble
+
+build_ensemble()
+```
+
+</CodeGroup>
+
+`build_ensemble()` runs two training phases in sequence:
+
+**Phase 1 — Base-System Filter (Model A)**
+
+A shallow `DecisionTreeClassifier` (depth 5) that eliminates obvious composites using modular arithmetic features:
+
+```python neural_net.py
+filter_features = [
+    'last_digit_base6', 'last_digit_base30',
+    'sum_base3', 'sum_base6', 'sum_base10',
+    'is_even_length_palindrome'
+]
+
+model_a = DecisionTreeClassifier(max_depth=5, random_state=42)
+model_a.fit(X_train_filter, y_train)
+```
+
+**Phase 2 — Deep Neural Network (Model B)**
+
+An `MLPClassifier` with three hidden layers (`64 → 128 → 64`) that resolves the ambiguous candidates that Model A passed through:
+
+```python neural_net.py
+complex_features = [
+    'len_base2', 'sum_base2', 'ratio_base2', 'ratio_base10',
+    'distance_from_max_sum', 'last_digit_base210', 'last_digit_base30'
+]
+
+model_b = MLPClassifier(
+    hidden_layer_sizes=(64, 128, 64),
+    activation='relu',
+    max_iter=1000,
+    random_state=42
+)
+model_b.fit(X_train_dnn, y_train_dnn)
+```
+
+Expected console output:
+
+```
+Generating Multi-Dimensional Dataset (1 to 20,000)...
+
+========================================================
+PHASE 1: THE BASE-SYSTEM FILTER (Clear Rules)
+========================================================
+Training Base-System Filter (Model A)...
+Model A Test Accuracy (Extrapolating 10k-20k): 89.xx%
+
+Model A successfully filtered down the 10,000 test numbers to just NNN 'Intersection' candidates!
+
+========================================================
+PHASE 2: THE DEEP NEURAL NETWORK (Resolving Intersections)
+========================================================
+Training Deep Neural Network on the NNN hardest numbers...
+
+--- FINAL ENSEMBLE EXTRAPOLATION RESULTS (10,001 to 20,000) ---
+Predicting completely unseen numbers using only non-divisional dimensions.
+Overall Ensemble Accuracy: XX.XX%
+
+Detailed Report:
+              precision    recall  f1-score   support
+
+   Composite       ...
+       Prime       ...
+```
+
+<Warning>
+  Dataset generation calls `extract_all_dimensions()` and `isprime()` for every number from 1 to 20,000. On a typical laptop this takes 1–3 minutes. The `sympy.isprime` calls dominate runtime for numbers with many Fermat checks.
+</Warning>
+
+</Step>
+
+<Step title="Run the full evaluation suite">
+
+`final_ensemble_test.py` extends the evaluation to three extrapolation ranges: `10k–20k`, `50k–60k`, and `100k–110k`. This tests whether the learned features generalize far beyond the training distribution.
+
+<CodeGroup>
+
+```bash run directly
+python final_ensemble_test.py
+```
+
+```python import and call
+from final_ensemble_test import run_evaluation
+
+run_evaluation()
+```
+
+</CodeGroup>
+
+`run_evaluation()` trains on `1–10,000` using the refined feature sets and threshold tuning from `final_ensemble_test.py`:
+
+```python final_ensemble_test.py
+filter_features = [
+    'last_digit_base6', 'last_digit_base30',
+    'is_indivisible_by_2', 'is_indivisible_by_3',
+    'is_indivisible_by_5', 'is_indivisible_by_7'
+]
+
+complex_features = [
+    'fermat_flag_base2', 'fermat_flag_base3',
+    'fermat_flag_base5', 'fermat_flag_base7',
+    'dist_to_square', 'modular_inverse_2',
+    'is_rem_9_prime', 'is_rem_30_prime',
+    'rem_30_base3_sum', 'rem_9_bin_pop',
+    'ratio_base10', 'distance_from_max_sum', 'is_palindrome_10'
+]
+```
+
+Model A uses a class weight of `{0: 20, 1: 1}` to heavily penalize false positives on composites, and Model B uses a high-confidence threshold of `0.9` for its prime predictions:
+
+```python final_ensemble_test.py
+model_a = DecisionTreeClassifier(
+    max_depth=5,
+    class_weight={0: 20, 1: 1},
+    random_state=42
+)
+
+# Model B prediction with precision threshold
+b_preds = (b_probs > 0.9).astype(int)
+```
+
+Expected output across all evaluation ranges:
+
+```
+========================================================
+FINAL FRACTAL ENSEMBLE TEST: Remainder Geometry Edition
+========================================================
+
+Training Base-System Filter (Model A)...
+Training DNN (Model B) with Fractal Features on NNN training intersections...
+
+--- RESULTS: Train Baseline (1-10k) ---
+Overall Accuracy: XX.XX%
+              precision    recall  f1-score   support
+   Composite       ...
+       Prime       ...
+
+--- RESULTS: Phase 5 Extrapolation (10k-20k) ---
+Overall Accuracy: XX.XX%
+...
+
+--- RESULTS: Phase 5 Far Extrapolation (50k-60k) ---
+Overall Accuracy: XX.XX%
+...
+
+--- RESULTS: Phase 5 Infinite Scale (100k-110k) ---
+Overall Accuracy: XX.XX%
+...
+```
+
+<Tip>
+  Accuracy typically holds up well even at `100k–110k` because the Fermat flags and remainder geometry features encode number-theoretic properties that scale uniformly — they don't rely on magnitude.
+</Tip>
+
+</Step>
+
+</Steps>
 
 ## Next steps
 
-Now that you have your docs running, explore these key features:
-
 <CardGroup cols={2}>
 
-<Card title="Write Content" icon="pen-to-square" href="/essentials/markdown">
-  Learn MDX syntax and start writing your documentation.
+<Card title="Arithmetic dimensions" icon="function" href="/concepts/arithmetic-dimensions">
+  Understand each feature produced by `extract_all_dimensions()` and the math behind it.
 </Card>
 
-<Card title="Customize style" icon="palette" href="/essentials/settings">
-  Make your docs match your brand perfectly.
+<Card title="Model architecture" icon="network-wired" href="/training/model-architecture">
+  Learn how Model A and Model B are structured and why a two-stage ensemble works here.
 </Card>
 
-<Card title="Add code examples" icon="square-code" href="/essentials/code">
-  Include syntax-highlighted code blocks.
+<Card title="Extrapolation results" icon="chart-line" href="/evaluation/extrapolation-results">
+  See benchmark accuracy across all evaluation ranges.
 </Card>
 
-<Card title="API documentation" icon="code" href="/api-reference/introduction">
-  Auto-generate API docs from OpenAPI specs.
+<Card title="Base systems" icon="hashtag" href="/concepts/base-systems">
+  Explore how base-6, base-30, and base-210 representations expose divisibility structure.
 </Card>
 
 </CardGroup>
-
-<Note>
-  **Need help?** See our [full documentation](https://mintlify.com/docs) or join our [community](https://mintlify.com/community).
-</Note>

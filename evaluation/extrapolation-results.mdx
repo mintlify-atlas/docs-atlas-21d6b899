@@ -1,0 +1,94 @@
+---
+title: 'Extrapolation results'
+description: 'How the model performs on number ranges far beyond its training domain, demonstrating structural learning vs. memorization.'
+---
+
+The most important test for any model claiming to learn mathematics is whether it generalizes beyond the data it was trained on. A model that memorizes a lookup table of primes up to 10,000 would fail instantly on 10,001. A model that learned the underlying geometric structure of the integers would not.
+
+The ensemble was trained exclusively on integers **1–10,000** and evaluated on four ranges, the furthest of which is an order of magnitude outside the training domain.
+
+## Why extrapolation matters
+
+Prime density decreases as numbers grow — roughly `1 / ln(n)` primes near `n`. A model that learned only frequency statistics would degrade rapidly: the class balance shifts, the "typical" prime looks different, and any magnitude-dependent feature would drift out of its training distribution.
+
+By contrast, a model that learned modular geometry — the structural position of `n` in base-6, base-30, and the Fermat witness residues — encounters the same patterns at any scale. The base-6 last digit of 100,003 cycles identically to that of 1,003. If the model generalizes, it is because it learned the geometry, not the instances.
+
+## Evaluation ranges
+
+| Range | Context | Accuracy | Prime recall |
+|-------|---------|----------|--------------|
+| 1 – 10,000 | Training baseline | 100.00% | 1.00 |
+| 10,001 – 20,000 | Near extrapolation | 85.51% | 0.69 |
+| 50,000 – 60,000 | Far extrapolation | 87.32% | 0.58 |
+| 100,000 – 110,000 | Infinite scale | 86.84% | 0.54 |
+
+Two observations stand out:
+
+1. **Accuracy stabilizes around 86–87%** across all three extrapolation ranges, including at 100k–110k. There is no continued degradation as numbers grow larger — this is the resolution of the "Sledgehammer" effect described below.
+2. **Prime recall decays from 0.69 to 0.54** as the range moves further out. This is expected and is explained by missing higher-order modular dimensions, not by model instability.
+
+## The "Sledgehammer" effect and its resolution
+
+In early versions of the ensemble, accuracy would collapse on large numbers. This was caused by two related problems: features that grew with magnitude (unbounded digit sums), and Model A over-pruning composites it was uncertain about at the boundaries of its training distribution.
+
+### Before and after the fix
+
+| Behavior | Before fix | After fix |
+|----------|------------|----------|
+| Feature scale at `n = 100,000` | Digit sums unbounded; shift out of training range | Cyclical modulos; bounded to same range as training |
+| Model A pruning rate at `n = 100,000` | Degrades; over-prunes or under-prunes | Stable at ~77% across all ranges |
+| Accuracy at 100k–110k | Collapses | Stable at ~86% |
+| Precision at 100k–110k | Not maintained | 1.00 (zero false positives) |
+
+<Steps>
+  <Step title="Cyclical modulos fix">
+    Raw digit sums grow without bound as `n` increases. A number with 6 digits has a larger digit sum range than a number with 4 digits, even if they occupy the same structural position modulo some base.
+
+    The fix converts digit sums to their modulo `(Base - 1)` value:
+
+    ```python neural_encoder.py
+    sum_base3_mod  = sum_of_digits(n, base=3)  % 2   # bounded to {0, 1}
+    sum_base6_mod  = sum_of_digits(n, base=6)  % 5   # bounded to {0, 1, 2, 3, 4}
+    sum_base10_mod = sum_of_digits(n, base=10) % 9   # bounded to {0, ..., 8}
+    ```
+
+    This works because the digit sum of `n` in base `B` is congruent to `n mod (B - 1)`. Reducing modulo `(B - 1)` makes the feature periodic and scale-invariant: the same structural position in the integer lattice always maps to the same feature value, regardless of the magnitude of `n`. A 6-digit number and a 100-digit number that share the same residue structure will present identical features to the model.
+  </Step>
+  <Step title="Confidence threshold fix">
+    Model A uses `class_weight={0: 20, 1: 1}` to make false positives 20× more costly. Without an explicit confidence threshold, this aggressive weighting could cause over-pruning at the edges of the training distribution — eliminating candidates the model is only marginally sure about.
+
+    The fix introduces a minimum confidence requirement: Model A only eliminates a number as composite if it is **more than 95% certain** it is composite.
+
+    ```python final_ensemble_test.py
+    probs_a = model_a.predict_proba(X_test_filter)[:, 1]
+    # Only forward to Model B if Model A is not highly confident composite
+    unsure_mask = probs_a >= 0.01  # prime probability >= 1%
+    ```
+
+    Numbers where Model A's composite confidence is below the threshold are passed to Model B for a second opinion, even if Model A leans composite. This prevents aggressive pruning from eliminating primes that the shallow decision tree cannot confidently resolve at extreme ranges.
+  </Step>
+</Steps>
+
+## Model A pruning stability
+
+The strongest evidence that the cyclical modulos fix works is the consistency of Model A's pruning rate:
+
+| Range | Model A pruning rate |
+|-------|----------------------|
+| 1 – 10,000 (training) | 77.11% |
+| 10,001 – 20,000 | 77.01% |
+| 100,000 – 110,000 | 77.04% |
+
+The ~77% composite elimination rate reflects a structural property of the integers: roughly 77% of any large consecutive range is divisible by 2, 3, 5, or 7, or has a last digit in base-6 or base-30 that is structurally composite. This rate is the same at 100,000 as at 1,000. A feature set that produces an unstable pruning rate at large numbers would indicate scale-dependent drift; the near-perfect consistency here confirms the features are scale-invariant.
+
+## Recall decay curve
+
+Prime recall drops from 0.69 at 10k–20k to 0.54 at 100k–110k. This is not model instability — it is a direct consequence of missing higher-order modular dimensions in the feature set.
+
+The training constraint explicitly excluded `mod_11`, `mod_13`, and larger moduli. As `n` grows, the smallest prime factor of a random composite also tends to grow. Composites such as `11 × 97 = 1067` or `13 × 103 = 1339` have no factor ≤ 7, so they are invisible to Model A's filter and pass all four Fermat witness tests at bases 2, 3, 5, and 7. The model cannot distinguish these from primes.
+
+The recall decay from 0.69 to 0.54 represents the increasing proportion of composites in far ranges that are only factorable by primes above 7.
+
+<Tip>
+  To improve recall at larger ranges, add modular features for the next tier of primes: `mod_11`, `mod_13`, `mod_17`, `mod_19`, and `mod_23`. Each additional modulus extends the range over which Model A can make mathematically certain composite eliminations. Adding `fermat_flag_base11` and `fermat_flag_base13` to Model B's feature set would similarly reduce the Fermat pseudoprime error rate. The architecture is designed to accommodate this extension without retraining the full ensemble — only the encoder and Model A's feature list need updating.
+</Tip>

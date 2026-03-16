@@ -1,0 +1,243 @@
+---
+title: 'final_ensemble_test'
+description: 'The refined evaluation suite with fractal features and probability thresholds, testing across multiple extrapolation ranges.'
+---
+
+The `final_ensemble_test` module is an improved evaluation harness that incorporates fractal remainder-geometry features, class-weighted training, and probability thresholds to push ensemble accuracy across progressively larger integer ranges.
+
+Key improvements over `neural_net.py`:
+
+- **Class weighting** — `class_weight={0: 20, 1: 1}` compensates for the heavy imbalance between composite and prime numbers.
+- **Fractal features** — Fermat flags, remainder primality checks (`is_rem_9_prime`, `is_rem_30_prime`), and remainder digit geometry replace the simpler base-system features used by Model B in `neural_net.py`.
+- **Probability thresholds** — Model A uses a `0.05` threshold to pass candidates through; Model B uses a `0.9` threshold to call a number prime, significantly reducing false positives.
+- **Multi-range evaluation** — Results are measured on 10k–20k, 50k–60k, and 100k–110k to verify that accuracy holds at scale.
+
+---
+
+## `generate_range`
+
+Builds a labeled `pd.DataFrame` for all integers in `[start, end]`.
+
+```python
+def generate_range(start, end):
+    print(f"Generating data for {start} to {end}...")
+    data = []
+    for i in range(start, end + 1):
+        dims = extract_all_dimensions(i)
+        if dims is None: continue
+        dims['is_prime'] = int(isprime(i))
+        dims['number'] = i
+        data.append(dims)
+    return pd.DataFrame(data)
+```
+
+**Parameters**
+
+<ParamField path="start" type="int" required>
+  First integer of the range (inclusive).
+</ParamField>
+
+<ParamField path="end" type="int" required>
+  Last integer of the range (inclusive).
+</ParamField>
+
+**Returns**
+
+<ResponseField name="DataFrame" type="pd.DataFrame">
+  One row per integer in `[start, end]`. Integers for which `extract_all_dimensions` returns `None` (i.e., `n < 1`) are silently skipped. Columns include all 24 dimension keys from `extract_all_dimensions`, plus:
+
+  <Expandable title="extra columns">
+    <ResponseField name="is_prime" type="int">
+      `1` if the integer is prime, `0` otherwise, as determined by `sympy.isprime`.
+    </ResponseField>
+    <ResponseField name="number" type="int">
+      The integer itself.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+---
+
+## `run_evaluation`
+
+The main evaluation entry point. Trains the two-stage ensemble on 1–10,000 and evaluates it across four datasets: the training baseline and three out-of-distribution ranges.
+
+```python
+def run_evaluation():
+    ...
+```
+
+**Parameters**
+
+None.
+
+**Returns**
+
+None. All results are printed to stdout.
+
+### Internal steps
+
+<Steps>
+  <Step title="Generate datasets">
+    The training set covers integers 1–10,000. Three test sets cover progressively more distant ranges.
+
+    ```python
+    train_df  = generate_range(1, 10000)
+    test_20k  = generate_range(10001, 20000)
+    test_60k  = generate_range(50000, 60000)
+    test_110k = generate_range(100000, 110000)
+    ```
+  </Step>
+
+  <Step title="Train Model A — class-weighted Decision Tree filter">
+    A `DecisionTreeClassifier` with `max_depth=5` and `class_weight={0: 20, 1: 1}` is trained on six indivisibility and residue features. The high weight on class 0 (composite) penalises missed primes more heavily, improving recall.
+
+    ```python
+    filter_features = [
+        'last_digit_base6',
+        'last_digit_base30',
+        'is_indivisible_by_2',
+        'is_indivisible_by_3',
+        'is_indivisible_by_5',
+        'is_indivisible_by_7',
+    ]
+
+    model_a = DecisionTreeClassifier(
+        max_depth=5,
+        class_weight={0: 20, 1: 1},
+        random_state=42,
+    )
+    model_a.fit(train_df[filter_features], train_df['is_prime'])
+    ```
+
+    The intersection candidates for Model B training are selected using a **soft threshold** of `0.05` on Model A's predicted probability:
+
+    ```python
+    train_proba_a = model_a.predict_proba(train_df[filter_features])[:, 1]
+    train_df['model_a_pred'] = (train_proba_a > 0.05).astype(int)
+    train_intersections = train_df[train_df['model_a_pred'] == 1].copy()
+    ```
+  </Step>
+
+  <Step title="Train Model B — Deep MLP on fractal features">
+    Model B is trained only on the intersection candidates identified by Model A, using thirteen fractal and structural features.
+
+    ```python
+    complex_features = [
+        'fermat_flag_base2',
+        'fermat_flag_base3',
+        'fermat_flag_base5',
+        'fermat_flag_base7',
+        'dist_to_square',
+        'modular_inverse_2',
+        'is_rem_9_prime',
+        'is_rem_30_prime',
+        'rem_30_base3_sum',
+        'rem_9_bin_pop',
+        'ratio_base10',
+        'distance_from_max_sum',
+        'is_palindrome_10',
+    ]
+
+    model_b = MLPClassifier(
+        hidden_layer_sizes=(64, 128, 64),
+        activation='relu',
+        max_iter=2000,
+        random_state=42,
+    )
+    model_b.fit(train_intersections[complex_features], train_intersections['is_prime'])
+    ```
+  </Step>
+
+  <Step title="Evaluate on each test set">
+    The `evaluate_set` helper is called for the training baseline and each of the three test ranges. It applies both models in sequence and prints accuracy plus a full classification report.
+
+    ```python
+    evaluate_set(train_df, "Train Baseline (1-10k)")
+    evaluate_set(test_20k,  "Phase 5 Extrapolation (10k-20k)")
+    evaluate_set(test_60k,  "Phase 5 Far Extrapolation (50k-60k)")
+    evaluate_set(test_110k, "Phase 5 Infinite Scale (100k-110k)")
+    ```
+  </Step>
+</Steps>
+
+### Ensemble inference logic
+
+For each test set, Model A's probability score gates access to Model B. Only numbers with a Model A prime-probability `>= 0.01` are forwarded. Model B then applies a **0.9 probability threshold** before calling a number prime.
+
+```python
+final_preds = np.zeros(len(test_df))
+unsure_mask = probs_a >= 0.01
+
+if unsure_mask.sum() > 0:
+    X_b    = test_df[unsure_mask][complex_features]
+    b_probs = model_b.predict_proba(X_b)[:, 1]
+    b_preds = (b_probs > 0.9).astype(int)
+    final_preds[unsure_mask] = b_preds
+```
+
+### Feature lists
+
+**Filter features (Model A)**
+
+| Feature | Description |
+|---|---|
+| `last_digit_base6` | `n % 6` |
+| `last_digit_base30` | `n % 30` |
+| `is_indivisible_by_2` | `1` if `n` is odd or `n == 2` |
+| `is_indivisible_by_3` | `1` if `n` is not divisible by 3 or `n == 3` |
+| `is_indivisible_by_5` | `1` if `n` is not divisible by 5 or `n == 5` |
+| `is_indivisible_by_7` | `1` if `n` is not divisible by 7 or `n == 7` |
+
+**Complex features (Model B)**
+
+| Feature | Description |
+|---|---|
+| `fermat_flag_base2` | Fermat primality witness base 2 |
+| `fermat_flag_base3` | Fermat primality witness base 3 |
+| `fermat_flag_base5` | Fermat primality witness base 5 |
+| `fermat_flag_base7` | Fermat primality witness base 7 |
+| `dist_to_square` | Distance from `n` to the next perfect square |
+| `modular_inverse_2` | `(n+1)//2` for odd `n`, else `0` |
+| `is_rem_9_prime` | `1` if `n % 9` is prime |
+| `is_rem_30_prime` | `1` if `n % 30` is prime |
+| `rem_30_base3_sum` | Sum of digits of `n % 30` in base 3 |
+| `rem_9_bin_pop` | Popcount of `n % 9` in binary |
+| `ratio_base10` | Average decimal digit value |
+| `distance_from_max_sum` | `9 * len_base10 - sum_base10` |
+| `is_palindrome_10` | `1` if `n` is a decimal palindrome |
+
+### Expected output
+
+```
+========================================================
+FINAL FRACTAL ENSEMBLE TEST: Remainder Geometry Edition
+========================================================
+
+Generating data for 1 to 10000...
+Generating data for 10001 to 20000...
+Generating data for 50000 to 60000...
+Generating data for 100000 to 110000...
+
+Training Base-System Filter (Model A)...
+Training DNN (Model B) with Fractal Features on N training intersections...
+
+--- RESULTS: Train Baseline (1-10k) ---
+Overall Accuracy: XX.XX%
+              precision    recall  f1-score   support
+   Composite       x.xx      x.xx      x.xx      xxxx
+       Prime       x.xx      x.xx      x.xx       xxx
+    accuracy                           x.xx     10000
+
+--- RESULTS: Phase 5 Extrapolation (10k-20k) ---
+Overall Accuracy: XX.XX%
+...
+
+--- RESULTS: Phase 5 Far Extrapolation (50k-60k) ---
+Overall Accuracy: XX.XX%
+...
+
+--- RESULTS: Phase 5 Infinite Scale (100k-110k) ---
+Overall Accuracy: XX.XX%
+...
+```
